@@ -34,7 +34,11 @@ if xlr_server and push_config:
     xlr_server = securityApi.decrypt(configurationApi.getConfiguration(xlr_server.getId()))
     xlr_server = to_dict(xlr_server)
 
-    executed_actions = xlrconfig.push_configuration(xlr_server, None, None, push_config, dry_run)
+    executed_actions = xlrconfig.push_configuration((xlr_server, None, None), push_config, dry_run, {
+        'folderApi': folderApi,
+        'templateApi': templateApi,
+        'configurationApi': configurationApi
+    })
 
     logger.info('Finished pushing the configurations: %s' % executed_actions)
 
