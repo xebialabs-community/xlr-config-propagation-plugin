@@ -1,0 +1,14 @@
+{
+  "templates": {
+    "include": [
+      "XL Release/.*",
+      "Overthere/.*"
+    ]
+  },
+  "configurations": {
+    "include": [],
+    "rename": {
+      "Jenkins: Server/Jenkins Server": "Jenkins: Server/Jenkins NG"
+    }
+  }
+}

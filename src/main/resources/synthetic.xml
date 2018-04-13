@@ -8,14 +8,16 @@
         <property name="checkConfigurationContentType" hidden="true" default="application/xml"/>
     </type>
 
-    <type type="xlrconfig.PushConfiguration" extends="xlrelease.PythonScript">
+    <type type="xlrconfig.PushConfiguration" extends="xlrelease.PythonScript" label="XL Release: Push Configuration">
         <property name="server" category="input" label="Server" referenced-type="xlrconfig.XLReleaseServer" kind="ci"
                   description="XL Release server to push configuration to."/>
         <property name="username" required="false" category="input"
                   description="Username to use when connecting to the XL Release server."/>
         <property name="password" password="true" required="false" category="input" label="Password"
                   description="Password to use when connecting to the XL Release server."/>
-        <property name="pushConfiguration" default="{}" category="input" kind="string"
+        <property name="pushConfiguration"
+                  default="{&quot;templates&quot;: {&quot;include&quot;: [&quot;Folder 1/.*&quot;]}, &quot;configurations&quot;: {&quot;include&quot;: [&quot;Jenkins: Server/.*&quot;], &quot;rename&quot;: {&quot;Jenkins: Server/Jenkins 1&quot;: &quot;Jenkins: Server/Jenkins One&quot;}}}"
+                  category="input" kind="string"
                   description="Configuration of what entities to push from which folders, with patterns, as JSON string. Check the documentation for details of the format."/>
         <property name="dryRun" default="true" category="input" kind="boolean"
                   description="If checked then this task will print out the actions that would be done, but not execute any actions."/>
