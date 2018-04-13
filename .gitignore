@@ -1,0 +1,12 @@
+.gradle/
+.idea/
+build/
+node_modules/
+xl-release-server/
+
+log/
+work/
+
+npm-debug.log
+*.iml
+.DS_Store

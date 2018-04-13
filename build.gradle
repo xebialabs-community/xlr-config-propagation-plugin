@@ -1,0 +1,79 @@
+buildscript {
+  repositories {
+    mavenLocal()
+    ["public", "thirdparty", "releases"].each { r ->
+      maven {
+        credentials {
+          username nexusUserName
+          password nexusPassword
+        }
+        url "${nexusBaseUrl}/repositories/${r}"
+      }
+    }
+  }
+
+  dependencies {
+    classpath "com.xebialabs.gradle.plugins:gradle-xl-plugins-plugin:${xlPluginsPluginVersion}"
+    classpath "com.xebialabs.gradle.plugins.xlrelease:gradle-xl-release-plugin-plugin:${xlReleasePluginPluginVersion}"
+  }
+}
+
+apply plugin: 'java'
+apply plugin: 'maven'
+apply plugin: 'groovy'
+apply plugin: 'com.xebialabs.xl-release.plugin'
+apply plugin: 'xebialabs.root.opinions'
+apply plugin: 'xebialabs.opinions'
+apply plugin: 'com.xebialabs.dependency'
+
+def distName = "xl-release"
+def xlrBase = "xl-release-server"
+
+xlReleasePlugin {
+  // This enables or disables hot reloading of web and Jython sources
+  useSourcesDirectly = false
+  xlReleaseHome = "${buildDir}/${xlrBase}/${distName}-${xlReleaseVersion}-server"
+}
+
+group 'com.xebialabs.xlrelease.plugins'
+
+configurations {
+  xlrDist
+}
+
+dependencies {
+  compile fileTree(dir: "${xlReleasePlugin.xlReleaseHome}/lib", includes: ['*.jar'])
+
+  xlrDist "com.xebialabs.xlrelease:${distName}-base:${xlReleaseVersion}:server@zip"
+}
+
+sourceSets.main.groovy.srcDirs += ["src/main/java"]
+
+import groovyx.net.http.HTTPBuilder
+import groovyx.net.http.Method
+import org.apache.tools.ant.taskdefs.condition.Os
+import java.util.concurrent.TimeUnit
+
+task unzipDist(type: Copy) {
+  from zipTree(file("${buildDir}/${xlrBase}/${distName}-base-${xlReleaseVersion}-server.zip"))
+  into file("${buildDir}/${xlrBase}")
+}
+
+task copyXlrDist(type: Copy) {
+  from configurations.xlrDist
+  into file("${buildDir}/${xlrBase}")
+}
+
+uploadArchives {
+  repositories.mavenDeployer {
+    repository(url: "${project.property("nexusBaseUrl")}/repositories/releases") {
+      authentication(userName: "${project.property("nexusUserName")}", password: "${project.property("nexusPassword")}")
+    }
+    snapshotRepository(url: "${project.property("nexusBaseUrl")}/repositories/snapshots") {
+      authentication(userName: "${project.property("nexusUserName")}", password: "${project.property("nexusPassword")}")
+    }
+  }
+}
+
+startXLRelease.dependsOn unzipDist
+compileJava.dependsOn unzipDist
