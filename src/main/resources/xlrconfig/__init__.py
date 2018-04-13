@@ -5,9 +5,9 @@ from xlrelease.HttpRequest import HttpRequest
 
 
 def push_configuration(server, username, password, push_config, dry_run):
-    pusher = ConfigurationSynchronizer(server, username, password, push_config, dry_run)
-    source_xlr = pusher.get_source_xlr_details()
-    target_xlr = pusher.get_target_xlr_details()
+    remote_xlr = RemoteXlr(server, username, password, push_config, dry_run)
+    source_xlr = get_local_xlr_details()
+    target_xlr = remote_xlr.get_xlr_details()
     print('Going to push configuration from XL Release %s (%s) to XL Release %s (%s)' % (
         source_xlr['version'], source_xlr['url'], target_xlr['version'], target_xlr['url']
     ))
@@ -18,21 +18,21 @@ def push_configuration(server, username, password, push_config, dry_run):
     return executed_actions
 
 
-# noinspection PyMethodMayBeStatic
-class ConfigurationSynchronizer:
+def get_local_xlr_details():
+    return {
+        'url': ServerConfiguration.getInstance().getServerUrl(),
+        'version': CurrentVersion.get()
+    }
 
+
+# noinspection PyMethodMayBeStatic
+class RemoteXlr:
     def __init__(self, server, username, password, push_config, dry_run):
         self.xlr_server_connection_details = (server, username, password)
         self.push_config = push_config
         self.dry_run = dry_run
 
-    def get_source_xlr_details(self):
-        return {
-            'url': ServerConfiguration.getInstance().getServerUrl(),
-            'version': CurrentVersion.get()
-        }
-
-    def get_target_xlr_details(self):
+    def get_xlr_details(self):
         request = HttpRequest(*self.xlr_server_connection_details)
         response = request.get('/server/info', contentType='application/xml')
         if response.isSuccessful():
