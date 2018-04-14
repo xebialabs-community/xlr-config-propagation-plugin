@@ -7,20 +7,52 @@ import re
 
 
 def push_configuration(connection_details, push_spec, dry_run, xlr_services):
-    remote_xlr = RemoteXlr(*connection_details)
-    local_xlr = LocalXlr(push_spec, xlr_services)
-    source_xlr = local_xlr.get_local_xlr_details()
-    target_xlr = remote_xlr.get_xlr_details()
-    print('Going to push configuration from XL Release %s (%s) to XL Release %s (%s)' % (
-        source_xlr['version'], source_xlr['url'], target_xlr['version'], target_xlr['url']
-    ))
+    pusher = ConfigurationPusher(connection_details, push_spec, dry_run, xlr_services)
+    return pusher.push_configuration()
 
-    templates_details = local_xlr.get_templates_to_push()
 
-    executed_actions = {
-        'templates_details': templates_details
-    }
-    return executed_actions
+class ConfigurationPusher:
+    def __init__(self, connection_details, push_spec, dry_run, xlr_services):
+        self.local_xlr = LocalXlr(push_spec, xlr_services)
+        self.remote_xlr = RemoteXlr(*connection_details)
+        self.dry_run = dry_run
+        self.warnings = []
+        self.errors = []
+        self.actions = []
+
+    def push_configuration(self):
+        source_xlr = self.local_xlr.get_local_xlr_details()
+        target_xlr = self.remote_xlr.get_xlr_details()
+        print('Going to push configuration from XL Release %s (%s) to XL Release %s (%s)' % (
+            source_xlr['version'], source_xlr['url'], target_xlr['version'], target_xlr['url']
+        ))
+
+        templates_details = self.local_xlr.get_templates_to_push()
+
+        # check if all folders are present on the target instance
+        # fail if any missing ones
+
+        # check if all configurations are present on the target instance
+        # warn about missing ones
+
+        # check for templates already present on the target system,
+        # warn that they won't be updated yet in this version of the plugin, remove from the sync list
+
+        # check if all referenced templates are present on the target instance
+        # warn about missing ones
+
+        # sort template topologically
+
+        # import templates one by one, rewriting JSONs with new imported IDs
+
+        return {
+            'warnings': self.warnings,
+            'errors': self.errors,
+            'actions': self.actions,
+
+            'debug_template_details': templates_details
+        }
+
 
 
 # noinspection PyMethodMayBeStatic
