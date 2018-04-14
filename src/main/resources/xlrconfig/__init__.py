@@ -3,7 +3,9 @@ from com.xebialabs.deployit.plumbing import CurrentVersion
 from com.xebialabs.deployit import ServerConfiguration
 from xlrelease.HttpRequest import HttpRequest
 from com.xebialabs.deployit.exception import NotFoundException
+import json
 import re
+import urllib
 
 
 def push_configuration(connection_details, push_spec, dry_run, xlr_services):
@@ -11,10 +13,19 @@ def push_configuration(connection_details, push_spec, dry_run, xlr_services):
     return pusher.push_configuration()
 
 
+def _get_parent(path):
+    if '/' in path:
+        return path.rsplit('/', 1)[0]
+    else:
+        return None
+
+
+# noinspection PyTypeChecker,PyMethodMayBeStatic
 class ConfigurationPusher:
     def __init__(self, connection_details, push_spec, dry_run, xlr_services):
         self.local_xlr = LocalXlr(push_spec, xlr_services)
         self.remote_xlr = RemoteXlr(*connection_details)
+        self.push_spec = push_spec
         self.dry_run = dry_run
         self.warnings = []
         self.errors = []
@@ -28,12 +39,18 @@ class ConfigurationPusher:
         ))
 
         templates_details = self.local_xlr.get_templates_to_push()
+        n_local_templates = len(templates_details)
 
         # check if all folders are present on the target instance
-        # fail if any missing ones
+        remote_folders = self.find_remote_folders(templates_details)
+        templates_details = self.filter_and_report_by_remote_folders(templates_details, remote_folders)
+        n_no_remote_folder = n_local_templates - len(templates_details)
 
-        # check if all configurations are present on the target instance
+        # check if all configurations are present on the target instance,
         # warn about missing ones
+        local_configurations = self.get_local_configurations(templates_details)
+        remote_configurations = self.find_remote_configurations(local_configurations)
+        self.report_missing_configurations(local_configurations, remote_configurations)
 
         # check for templates already present on the target system,
         # warn that they won't be updated yet in this version of the plugin, remove from the sync list
@@ -50,9 +67,84 @@ class ConfigurationPusher:
             'errors': self.errors,
             'actions': self.actions,
 
-            'debug_template_details': templates_details
+            'debug_template_details': templates_details,
+            'debug_remote_folders': remote_folders,
+            'debug_remote_configurations': remote_configurations
         }
 
+    def find_remote_folders(self, templates_details):
+        # collect expected remote folder paths
+        local_folder_paths = list(set([_get_parent(t['path']) for t in templates_details if _get_parent(t['path'])]))
+        local_folder_paths.sort()
+        renamings = self.push_spec.get('folders', {}).get('rename', {})
+        local_to_remote_path = dict(zip(local_folder_paths, local_folder_paths))
+        for local_path in local_folder_paths:
+            for pattern_to_rename in renamings:
+                pattern = '^' + pattern_to_rename
+                if re.match(pattern, local_path):
+                    remote_path = re.sub(pattern, renamings[pattern_to_rename], local_path)
+                    local_to_remote_path[local_path] = remote_path
+                    break  # don't go through several renamings
+
+        # search for remote folders and save their IDs
+        return dict(map(
+            lambda path: (path, self.remote_xlr.get_folder_id_by_path(local_to_remote_path[path])),
+            local_folder_paths
+        ))
+
+    def get_local_configurations(self, templates_details):
+        return dict([(config['id'], config)
+                     for template in templates_details
+                     for config in template['referenced_configurations']])
+
+    def find_remote_configurations(self, local_configurations):
+        # collect expected remote configurations
+        remote_configurations = {}
+        renamings = self.push_spec.get('configurations', {}).get('rename', {})
+        for (local_config_id, local_config) in local_configurations.items():
+            config_type = local_config['type']
+            local_title = local_config['title']
+            remote_title = renamings.get('%s/%s' % (config_type, local_title), local_title)
+            remote_config_id = self.remote_xlr.get_configuration_id_by_type_and_title(
+                config_type, remote_title, self.warnings)
+            remote_configurations[local_config_id] = remote_config_id
+        return remote_configurations
+
+    def filter_and_report_by_remote_folders(self, templates_details, remote_folders):
+        template_ids_with_no_remote_folder = []
+        template_count_by_path = {}
+
+        # add remote folder id where present and count where absent
+        for template in templates_details:
+            folder_path = _get_parent(template['path'])
+            if folder_path:
+                # a folder template
+                if remote_folders[folder_path]:
+                    template['remote_folder_id'] = remote_folders[folder_path]
+                else:
+                    template_ids_with_no_remote_folder.append(template['id'])
+                    count = template_count_by_path.get(folder_path, 0)
+                    template_count_by_path[folder_path] = count + 1
+            else:
+                # a root template
+                template['remote_folder_id'] = '/'
+
+        # report the absent ones
+        missing_paths = [path for (path, folder_id) in remote_folders.items() if not folder_id]
+        if missing_paths:
+            missing_paths.sort()
+            for path in missing_paths:
+                self.errors.append('Missing remote folder [%s] for %d matching templates' %
+                                   (path, template_count_by_path.get(path, 0)))
+        # return only the present ones
+        return filter(lambda t: 'remote_folder_id' in t, templates_details)
+
+    def report_missing_configurations(self, local_configurations, remote_configurations):
+        ids_missing = [local_id for (local_id, remote_id) in remote_configurations.items() if not remote_id]
+        for local_id in ids_missing:
+            config = local_configurations[local_id]
+            self.warnings.append('Missing remote configuration by type [%s] and title [%s]' %
+                                 (config['type'], config['title']))
 
 
 # noinspection PyMethodMayBeStatic
@@ -110,7 +202,7 @@ class LocalXlr:
         }
 
     def _get_name_path(self, ci_id, ci_path):
-        parent_id = ci_id.rsplit('/', 1)[0]
+        parent_id = _get_parent(ci_id)
         if not parent_id or '/' not in parent_id:
             return ci_path  # stop on 'Applications'
         if parent_id in self._folder_names_cache:
@@ -122,7 +214,8 @@ class LocalXlr:
 
     def _matches_spec(self, path, spec):
         return any(map(
-            lambda pattern: re.match(pattern, path),
+            # check for full match, so all characters should be part of the pattern
+            lambda pattern: re.match(pattern, path) and len(re.match(pattern, path).group(0)) == len(path),
             spec['include']
         ))
 
@@ -182,8 +275,7 @@ class RemoteXlr:
         self.password = password
 
     def get_xlr_details(self):
-        request = HttpRequest(self.server, self.username, self.password)
-        response = request.get('/server/info', contentType='application/xml')
+        response = self._request().get('/server/info', contentType='application/xml')
         if response.isSuccessful():
             version = XmlPathResult(response.response, '/server-info/version').get()
             return {
@@ -193,3 +285,33 @@ class RemoteXlr:
         else:
             response.errorDump()
             raise Exception('Version request to /server/info failed with status %d' % response.getStatus())
+
+    def get_folder_id_by_path(self, path):
+        query = '?byPath=%s' % urllib.quote(path)
+        response = self._request().get('/api/v1/folders/find' + query, contentType='application/json')
+        if response.getStatus() == 200:
+            return json.loads(response.response)['id']
+        elif response.getStatus() == 404:
+            return None
+        else:
+            response.errorDump()
+            raise Exception('Request to find a folder [%s] failed with status %d' % (path, response.getStatus()))
+
+    def get_configuration_id_by_type_and_title(self, config_type, config_title, warnings):
+        query = '?configurationType=%s&title=%s' % (urllib.quote(config_type), urllib.quote(config_title))
+        response = self._request().get('/api/v1/config/byTypeAndTitle' + query, contentType='application/json')
+        if response.getStatus() == 200:
+            configurations = json.loads(response.response)
+            if not configurations:
+                return None
+            if len(configurations) > 1:
+                warnings.append('Found %d configurations by type [%s] and title [%s], choosing the first from: %s' %
+                                (len(configurations), config_type, config_title, [c['id'] for c in configurations]))
+            return configurations[0]['id']
+        else:
+            response.errorDump()
+            raise Exception('Request to find a configuration [%s/%s] failed with status %d' %
+                            (config_type, config_title, response.getStatus()))
+
+    def _request(self):
+        return HttpRequest(self.server, self.username, self.password)

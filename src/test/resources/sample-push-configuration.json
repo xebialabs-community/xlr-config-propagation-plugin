@@ -2,8 +2,15 @@
   "templates": {
     "include": [
       "XL Release/.*",
-      "Overthere/.*"
+      "Product Marketing/.*",
+      "Overthere/.*",
+      "A Production Template"
     ]
+  },
+  "folders": {
+    "rename": {
+      "Product Marketing": "Product Management"
+    }
   },
   "configurations": {
     "rename": {
