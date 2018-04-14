@@ -30,7 +30,8 @@ class LocalXlr:
         self.template_api = xlr_services['templateApi']
         self.folder_api = xlr_services['folderApi']
         self.configuration_api = xlr_services['configurationApi']
-        self.folder_names_cache = {}
+        self._folder_names_cache = {}
+        self._configurations_details_cache = {}
 
     def get_local_xlr_details(self):
         return {
@@ -80,11 +81,11 @@ class LocalXlr:
         parent_id = ci_id.rsplit('/', 1)[0]
         if not parent_id or '/' not in parent_id:
             return ci_path  # stop on 'Applications'
-        if parent_id in self.folder_names_cache:
-            parent_name = self.folder_names_cache[parent_id]
+        if parent_id in self._folder_names_cache:
+            parent_name = self._folder_names_cache[parent_id]
         else:
             parent_name = self.folder_api.getFolder(parent_id).getTitle()
-            self.folder_names_cache[parent_id] = parent_name
+            self._folder_names_cache[parent_id] = parent_name
         return self._get_name_path(parent_id, parent_name + '/' + ci_path)
 
     def _matches_spec(self, path, spec):
@@ -97,7 +98,22 @@ class LocalXlr:
         return id[1:] if id.startswith('/') else id
 
     def _get_referenced_configurations(self, template):
-        return []  # TODO: implement
+        referenced_configurations = []
+        template_json = self._serialize(template)
+        for config_id in re.findall('"Configuration/Custom/[\w/]+"', template_json):
+            config_id = config_id.replace('"', '')
+            if config_id in self._configurations_details_cache:
+                config_details = self._configurations_details_cache[config_id]
+            else:
+                config = self.configuration_api.getConfiguration(config_id)
+                config_details = {
+                    'id': config.getId(),
+                    'type': config.getType().toString(),
+                    'title': config.getTitle()
+                }
+                self._configurations_details_cache[config_id] = config_details
+            referenced_configurations.append(config_details)
+        return referenced_configurations
 
     def _get_referenced_templates(self, template):
         referenced_templates = []
@@ -117,8 +133,14 @@ class LocalXlr:
                     print('WARN: could not find template by ID [%s] referenced by task [%s](%s) '
                           'of template [%s](%s): %s' % (referenced_template_id, task.getTitle(), task.getId(),
                                                         template.getTitle(), template.getId(), e))
-
         return referenced_templates
+
+    def _serialize(self, ci):
+        from com.xebialabs.xlrelease.json import CiSerializerHelper
+        if ci._delegate:
+            return CiSerializerHelper.serialize(ci._delegate)
+        else:
+            return CiSerializerHelper.serialize(ci)
 
 
 class RemoteXlr:
