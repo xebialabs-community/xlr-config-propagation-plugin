@@ -44,7 +44,7 @@ class ConfigurationPusher:
         # check if all folders are present on the target instance
         remote_folders = self.find_remote_folders(templates_details)
         templates_details = self.filter_and_report_by_remote_folders(templates_details, remote_folders)
-        n_no_remote_folder = n_local_templates - len(templates_details)
+        n_with_remote_folder = len(templates_details)
 
         # check if all configurations are present on the target instance,
         # warn about missing ones
@@ -53,7 +53,8 @@ class ConfigurationPusher:
         self.report_missing_configurations(local_configurations, remote_configurations)
 
         # check for templates already present on the target system,
-        # warn that they won't be updated yet in this version of the plugin, remove from the sync list
+        templates_details = self.filter_and_report_existing_templates(templates_details)
+        n_not_existing_remotely = len(templates_details)
 
         # check if all referenced templates are present on the target instance
         # warn about missing ones
@@ -69,7 +70,12 @@ class ConfigurationPusher:
 
             'debug_template_details': templates_details,
             'debug_remote_folders': remote_folders,
-            'debug_remote_configurations': remote_configurations
+            'debug_remote_configurations': remote_configurations,
+            'debug_numbers': {
+                'n_local_templates': n_local_templates,
+                'n_with_remote_folder': n_with_remote_folder,
+                'n_not_existing_remotely': n_not_existing_remotely
+            }
         }
 
     def find_remote_folders(self, templates_details):
@@ -111,7 +117,6 @@ class ConfigurationPusher:
         return remote_configurations
 
     def filter_and_report_by_remote_folders(self, templates_details, remote_folders):
-        template_ids_with_no_remote_folder = []
         template_count_by_path = {}
 
         # add remote folder id where present and count where absent
@@ -122,12 +127,11 @@ class ConfigurationPusher:
                 if remote_folders[folder_path]:
                     template['remote_folder_id'] = remote_folders[folder_path]
                 else:
-                    template_ids_with_no_remote_folder.append(template['id'])
                     count = template_count_by_path.get(folder_path, 0)
                     template_count_by_path[folder_path] = count + 1
             else:
                 # a root template
-                template['remote_folder_id'] = '/'
+                template['remote_folder_id'] = 'Applications'
 
         # report the absent ones
         missing_paths = [path for (path, folder_id) in remote_folders.items() if not folder_id]
@@ -145,6 +149,22 @@ class ConfigurationPusher:
             config = local_configurations[local_id]
             self.warnings.append('Missing remote configuration by type [%s] and title [%s]' %
                                  (config['type'], config['title']))
+
+    def filter_and_report_existing_templates(self, templates_details):
+        existing_template_ids = {}
+        for template in templates_details:
+            path = template['path']
+            title = path if '/' not in path else path.rsplit('/', 1)[1]
+            remote_template = self.remote_xlr.get_template_by_folder_and_title(template['remote_folder_id'], title)
+            if remote_template:
+                self.actions.append({
+                    'type': 'noop',
+                    'description': 'Template [%s](%s) already exists on the remote instance: [%s]' %
+                                   (title, template['id'], remote_template['id'])
+                })
+                existing_template_ids[template['id']] = remote_template['id']
+        # return only non-existing ones
+        return filter(lambda t: t['id'] not in existing_template_ids, templates_details)
 
 
 # noinspection PyMethodMayBeStatic
@@ -312,6 +332,31 @@ class RemoteXlr:
             response.errorDump()
             raise Exception('Request to find a configuration [%s/%s] failed with status %d' %
                             (config_type, config_title, response.getStatus()))
+
+    def get_template_by_folder_and_title(self, folder_id, title):
+        # Unfortunately there's no public API to search for a template by folder _and_ title,
+        # so iterate through all templates of a folder
+        context = '/api/v1/folders/%s/templates' % folder_id
+        results_per_page = 20
+        page = 0
+        while True:
+            query = '?page=%d&resultsPerPage=%d&depth=1' % (page, results_per_page)
+            response = self._request().get(context + query, contentType='application/json')
+            if response.getStatus() == 200:
+                templates = json.loads(response.response)
+            else:
+                response.errorDump()
+                raise Exception('Request to get a page %d of templates of folder [%s] failed with status %d' %
+                                (page, folder_id, response.getStatus()))
+            if not templates:
+                # pagination finished
+                break
+            for template in templates:
+                if template['title'] == title:
+                    return template
+            page += 1
+
+        return None
 
     def _request(self):
         return HttpRequest(self.server, self.username, self.password)
