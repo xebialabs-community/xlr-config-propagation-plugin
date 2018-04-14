@@ -2,6 +2,7 @@ from com.xebialabs.xlrelease.plugin.webhook import XmlPathResult
 from com.xebialabs.deployit.plumbing import CurrentVersion
 from com.xebialabs.deployit import ServerConfiguration
 from xlrelease.HttpRequest import HttpRequest
+from com.xebialabs.deployit.exception import NotFoundException
 import re
 
 
@@ -46,9 +47,10 @@ class LocalXlr:
             # title, tags, page, resultsPerPage, depth
             templates_page = self.template_api.getTemplates(None, None, page, page_size, 1000)
 
-            templates_details = map(self._get_template_details, templates_page)
-            for details in templates_details:
+            templates_with_details = map(lambda t: (t, self._get_template_id_and_path(t)), templates_page)
+            for (template, details) in templates_with_details:
                 if self._matches_spec(details['path'], templates_spec):
+                    details.update(self._get_template_references(template))
                     matching_templates_details.append(details)
 
             if len(templates_page) == 0:
@@ -58,20 +60,24 @@ class LocalXlr:
 
         return matching_templates_details
 
-    def _get_template_details(self, template):
+    def _get_template_id_and_path(self, template):
         ci_id = self._normalize(template.getId())
-        parent_id = ci_id.rsplit('/', 1)[0]
-        path = self._get_name_path(parent_id, template.getTitle())
+        path = self._get_name_path(ci_id, template.getTitle())
+        return {
+            'id': ci_id,
+            'path': path
+        }
+
+    def _get_template_references(self, template):
         referenced_configurations = self._get_referenced_configurations(template)
         referenced_templates = self._get_referenced_templates(template)
         return {
-            'id': ci_id,
-            'path': path,
             'referenced_configurations': referenced_configurations,
             'referenced_templates': referenced_templates
         }
 
-    def _get_name_path(self, parent_id, ci_path):
+    def _get_name_path(self, ci_id, ci_path):
+        parent_id = ci_id.rsplit('/', 1)[0]
         if not parent_id or '/' not in parent_id:
             return ci_path  # stop on 'Applications'
         if parent_id in self.folder_names_cache:
@@ -79,8 +85,7 @@ class LocalXlr:
         else:
             parent_name = self.folder_api.getFolder(parent_id).getTitle()
             self.folder_names_cache[parent_id] = parent_name
-        grand_parent_id = parent_id.rsplit('/', 1)[0]
-        return self._get_name_path(grand_parent_id, parent_name + '/' + ci_path)
+        return self._get_name_path(parent_id, parent_name + '/' + ci_path)
 
     def _matches_spec(self, path, spec):
         return any(map(
@@ -95,7 +100,25 @@ class LocalXlr:
         return []  # TODO: implement
 
     def _get_referenced_templates(self, template):
-        return []  # TODO: implement
+        referenced_templates = []
+        for task in template.getAllTasks():
+            if task.getType().toString() == 'xlrelease.CreateReleaseTask' and task.getProperty('templateId'):
+                referenced_template_id = task.getProperty('templateId')
+                try:
+                    referenced_template = self.template_api.getTemplate(referenced_template_id)
+                    referenced_template_path = self._get_name_path(referenced_template_id,
+                                                                   referenced_template.getTitle())
+                    referenced_templates.append({
+                        'id': referenced_template_id,
+                        'path': referenced_template_path,
+                        'from_task_id': task.getId()
+                    })
+                except NotFoundException as e:
+                    print('WARN: could not find template by ID [%s] referenced by task [%s](%s) '
+                          'of template [%s](%s): %s' % (referenced_template_id, task.getTitle(), task.getId(),
+                                                        template.getTitle(), template.getId(), e))
+
+        return referenced_templates
 
 
 class RemoteXlr:
