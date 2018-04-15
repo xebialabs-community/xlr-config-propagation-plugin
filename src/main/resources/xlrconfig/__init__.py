@@ -91,6 +91,8 @@ class ConfigurationPusher:
         if not self.dry_run:
             print('Prepared the execution plan of %d actions, start executing' % len(self.actions))
             self.execute_actions()
+            print('Finished the execution, pushed %d templates to the remote instance out of %d matched local ones' %
+                  (self.stats['n_imported'], n_local_templates))
         else:
             print('Skipping execution of %d actions as it is dry run' % len(self.actions))
 
@@ -234,7 +236,9 @@ class ConfigurationPusher:
         self.stats['n_failed_import'] = n_failed_import
 
     def import_template(self, template_details):
-        template_json = self.local_xlr.get_template_as_json(template_details['id'])
+        template = self.local_xlr.get_template(template_details['id'])
+        self.local_xlr.strip_attachments_and_warn(template, self.warnings)
+        template_json = self.local_xlr.to_json(template)
 
         def replace_ids(t_json, local_id, remote_id):
             return t_json.replace('"%s"' % local_id, '"%s"' % remote_id)
@@ -330,7 +334,7 @@ class LocalXlr:
 
     def _get_referenced_configurations(self, template):
         referenced_configurations = []
-        template_json = self._serialize(template)
+        template_json = self.to_json(template)
         for config_id in set(re.findall('"Configuration/Custom/[\w/]+"', template_json)):
             config_id = config_id.replace('"', '')
             if config_id in self._configurations_details_cache:
@@ -366,12 +370,20 @@ class LocalXlr:
                                                         template.getTitle(), template.getId(), e))
         return referenced_templates
 
-    def get_template_as_json(self, template_id):
-        template = self.template_api.getTemplate(template_id)
-        return self._serialize(template)
+    def get_template(self, template_id):
+        return self.template_api.getTemplate(template_id)
+
+    def strip_attachments_and_warn(self, template, warnings):
+        if template.getAttachments():
+            warnings.append('Skipping export of %d attachments of template [%s](%s) as it is not supported yet' % (
+                len(template.getAttachments()), template.getTitle(), template.getId()
+            ))
+            template.setAttachments([])
+            for task in template.getAllTasks():
+                task.setAttachments([])
 
     # noinspection PyProtectedMember
-    def _serialize(self, ci):
+    def to_json(self, ci):
         from com.xebialabs.xlrelease.json import CiSerializerHelper
         if ci._delegate:
             return CiSerializerHelper.serialize(ci._delegate)
