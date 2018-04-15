@@ -163,10 +163,10 @@ class ConfigurationPusher:
             config['remote_configuration_id'] = remote_configurations[config['id']]
 
     def filter_by_present_remote_folder(self, templates_details):
-        templates_with_no_remote_folder = filter(lambda t: 'remote_folder_id' not in t, templates_details)
+        templates_with_no_remote_folder = filter(lambda t: not t['remote_folder_id'], templates_details)
         missing_templates_count_by_path = {}
         for path, templates in groupby(templates_with_no_remote_folder, lambda t: _get_parent(t['remote_path'])):
-            missing_templates_count_by_path[path] = len(templates)
+            missing_templates_count_by_path[path] = len(list(templates))
         missing_paths = missing_templates_count_by_path.keys()
         missing_paths.sort()
         for path in missing_paths:

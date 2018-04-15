@@ -2,6 +2,9 @@
   "templates": {
     "include": [
       "XL Release/.*",
+      "XL Deploy/.*",
+      "XL Products/.*",
+      "Plugins/.*",
       "Product Marketing/.*",
       "Overthere/.*",
       "A Production Template"
