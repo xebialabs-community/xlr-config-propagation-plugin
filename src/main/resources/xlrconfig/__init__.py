@@ -238,6 +238,7 @@ class ConfigurationPusher:
     def import_template(self, template_details):
         template = self.local_xlr.get_template(template_details['id'])
         self.local_xlr.strip_attachments_and_warn(template, self.warnings)
+        self.local_xlr.check_triggers_and_warn(template, self.warnings)
         template_json = self.local_xlr.to_json(template)
 
         def replace_ids(t_json, local_id, remote_id):
@@ -335,7 +336,7 @@ class LocalXlr:
     def _get_referenced_configurations(self, template):
         referenced_configurations = []
         template_json = self.to_json(template)
-        for config_id in set(re.findall('"Configuration/Custom/[\w/]+"', template_json)):
+        for config_id in set(re.findall('"Configuration/Custom/[\w /]+"', template_json)):
             config_id = config_id.replace('"', '')
             if config_id in self._configurations_details_cache:
                 config_details = self._configurations_details_cache[config_id]
@@ -381,6 +382,12 @@ class LocalXlr:
             template.setAttachments([])
             for task in template.getAllTasks():
                 task.setAttachments([])
+
+    def check_triggers_and_warn(self, template, warnings):
+        if template.getReleaseTriggers():
+            warnings.append('Template [%s](%s) has %d triggers, enable them manually after the import' % (
+                template.getTitle(), template.getId(), len(template.getReleaseTriggers())
+            ))
 
     # noinspection PyProtectedMember
     def to_json(self, ci):
@@ -482,7 +489,10 @@ class RemoteXlr:
         return self.folder_id_to_template_title_to_id_cache[folder_id].get(title, None)
 
     def import_template(self, folder_id, template_json, template_path, warnings):
-        query = '?folderId=%s' % folder_id
+        if folder_id == 'Applications':
+            query = ''
+        else:
+            query = '?folderId=%s' % folder_id
         body = '[%s]' % template_json  # the import endpoint expects an array of one template
         response = self._request().post('/api/v1/templates/import' + query, body, contentType='application/json')
         if response.isSuccessful():
