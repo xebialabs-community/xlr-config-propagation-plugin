@@ -71,7 +71,8 @@ class ConfigurationPusher:
         # target instance or are going to be pushed
         self.report_missing_referenced_templates(templates_details)
 
-        # sort templates topologically
+        # sort templates first-dependent-then-depending order
+        TopologicalSorter(templates_details, self.warnings).sort()
 
         # import templates one by one, rewriting JSONs with new imported IDs
 
@@ -411,3 +412,45 @@ class RemoteXlr:
 
     def _request(self):
         return HttpRequest(self.server, self.username, self.password)
+
+
+class TopologicalSorter:
+    def __init__(self, templates_details, warnings):
+        self.templates_details = templates_details
+        self.warnings = warnings
+
+    def sort(self):
+        templates_by_ids = dict([(t['id'], t) for t in self.templates_details])
+        ordered_ids = []
+        stack = []
+
+        for template_id in templates_by_ids:
+            if template_id in ordered_ids:
+                continue  # already visited by a previous DFS run
+            # Run DFS algorithm and push to ordered_ids when exiting a tree branch
+            visited = set()
+            stack.append(template_id)
+            while stack:
+                node_id = stack[-1]
+                children_ids = [t['id'] for t in templates_by_ids[node_id]['referenced_templates']]
+                children_to_visit = set(children_ids) - visited
+                if children_to_visit:
+                    child_id = next(iter(children_to_visit))
+                    if child_id in stack:
+                        # cycle detected
+                        self.warnings.append('There is a cycle CreateReleaseTask dependency between templates '
+                                             '[%s] and [%s], so you will have to restore the link manually after the '
+                                             'configuration has been pushed' % (node_id, child_id))
+                    elif child_id not in templates_by_ids:
+                        # encountered an external template reference, skipping
+                        visited.add(child_id)
+                    else:
+                        stack.append(child_id)
+                else:
+                    # all children visited, go up the tree
+                    stack.pop()
+                    visited.add(node_id)
+                    ordered_ids.append(node_id)
+
+        # sort templates_details according to the topological order
+        self.templates_details.sort(key=lambda template: ordered_ids.index(template['id']))
