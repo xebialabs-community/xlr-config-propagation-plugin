@@ -132,7 +132,7 @@ class ConfigurationPusher:
             if template.get('remote_folder_id', None):
                 title = _get_name(template['remote_path'])
                 remote_template_id = self.remote_xlr.get_template_id_by_folder_and_title(
-                    template['remote_folder_id'], title)
+                    template['remote_folder_id'], title, self.warnings)
             template['remote_template_id'] = remote_template_id
 
     def find_and_apply_remote_configuration_ids(self, templates_details):
@@ -322,6 +322,9 @@ class RemoteXlr:
         self.server = server
         self.username = username
         self.password = password
+        self.folder_path_to_id_cache = {}
+        self.configuration_type_title_to_id_cache = {}
+        self.folder_id_to_template_title_to_id_cache = {}
 
     def get_xlr_details(self):
         response = self._request().get('/server/info', contentType='application/xml')
@@ -336,35 +339,49 @@ class RemoteXlr:
             raise Exception('Version request to /server/info failed with status %d' % response.getStatus())
 
     def get_folder_id_by_path(self, path):
+        if path in self.folder_path_to_id_cache:
+            return self.folder_path_to_id_cache[path]
         query = '?byPath=%s' % urllib.quote(path)
         response = self._request().get('/api/v1/folders/find' + query, contentType='application/json')
         if response.getStatus() == 200:
-            return json.loads(response.response)['id']
+            folder_id = json.loads(response.response)['id']
         elif response.getStatus() == 404:
-            return None
+            folder_id = None
         else:
             response.errorDump()
             raise Exception('Request to find a folder [%s] failed with status %d' % (path, response.getStatus()))
+        self.folder_path_to_id_cache[path] = folder_id
+        return folder_id
 
     def get_configuration_id_by_type_and_title(self, config_type, config_title, warnings):
+        path = '%s/%s' % (config_type, config_title)
+        if path in self.configuration_type_title_to_id_cache:
+            return self.configuration_type_title_to_id_cache[path]
         query = '?configurationType=%s&title=%s' % (urllib.quote(config_type), urllib.quote(config_title))
         response = self._request().get('/api/v1/config/byTypeAndTitle' + query, contentType='application/json')
         if response.getStatus() == 200:
             configurations = json.loads(response.response)
             if not configurations:
-                return None
-            if len(configurations) > 1:
-                warnings.append('Found %d configurations by type [%s] and title [%s], choosing the first from: %s' %
-                                (len(configurations), config_type, config_title, [c['id'] for c in configurations]))
-            return configurations[0]['id']
+                configuration_id = None
+            else:
+                if len(configurations) > 1:
+                    warnings.append('Found %d configurations by type [%s] and title [%s], choosing the first from: %s' %
+                                    (len(configurations), config_type, config_title, [c['id'] for c in configurations]))
+                configuration_id = configurations[0]['id']
         else:
             response.errorDump()
             raise Exception('Request to find a configuration [%s/%s] failed with status %d' %
                             (config_type, config_title, response.getStatus()))
+        self.configuration_type_title_to_id_cache[path] = configuration_id
+        return configuration_id
 
-    def get_template_id_by_folder_and_title(self, folder_id, title):
+    def get_template_id_by_folder_and_title(self, folder_id, title, warnings):
+        if folder_id in self.folder_id_to_template_title_to_id_cache:
+            return self.folder_id_to_template_title_to_id_cache[folder_id].get(title, None)
+
         # Unfortunately there's no public API to search for a template by folder _and_ title,
-        # so iterate through all templates of a folder
+        # so iterate through all templates of a folder and cache them
+        template_titles_to_ids = {}
         context = '/api/v1/folders/%s/templates' % folder_id
         results_per_page = 20
         page = 0
@@ -381,11 +398,16 @@ class RemoteXlr:
                 # pagination finished
                 break
             for template in templates:
-                if template['title'] == title:
-                    return template['id']
+                if template['title'] in template_titles_to_ids:
+                    warnings.append('Found more than one template by title [%s] in remote folder [%s], choosing '
+                                    'the first one: [%s]' % (template['title'], folder_id,
+                                                             template_titles_to_ids[template['title']]))
+                else:
+                    template_titles_to_ids[template['title']] = template['id']
             page += 1
 
-        return None
+        self.folder_id_to_template_title_to_id_cache[folder_id] = template_titles_to_ids
+        return self.folder_id_to_template_title_to_id_cache[folder_id].get(title, None)
 
     def _request(self):
         return HttpRequest(self.server, self.username, self.password)
