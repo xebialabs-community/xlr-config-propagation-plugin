@@ -3,6 +3,7 @@ from com.xebialabs.deployit.plumbing import CurrentVersion
 from com.xebialabs.deployit import ServerConfiguration
 from xlrelease.HttpRequest import HttpRequest
 from com.xebialabs.deployit.exception import NotFoundException
+from itertools import groupby
 import json
 import re
 import urllib
@@ -16,8 +17,13 @@ def push_configuration(connection_details, push_spec, dry_run, xlr_services):
 def _get_parent(path):
     if '/' in path:
         return path.rsplit('/', 1)[0]
-    else:
-        return None
+    return None
+
+
+def _get_name(path):
+    if '/' in path:
+        return path.rsplit('/', 1)[1]
+    return path
 
 
 # noinspection PyTypeChecker,PyMethodMayBeStatic
@@ -38,28 +44,34 @@ class ConfigurationPusher:
             source_xlr['version'], source_xlr['url'], target_xlr['version'], target_xlr['url']
         ))
 
+        # find templates that were requested to be pushed
         templates_details = self.local_xlr.get_templates_to_push()
         n_local_templates = len(templates_details)
 
+        self.apply_folder_renamings(templates_details)
+        self.apply_configuration_renamings(templates_details)
+
+        # find corresponding remote entities
+        self.find_and_apply_remote_folder_ids(templates_details)
+        self.find_and_apply_remote_template_ids(templates_details)
+        self.find_and_apply_remote_configuration_ids(templates_details)
+
         # check if all folders are present on the target instance
-        remote_folders = self.find_remote_folders(templates_details)
-        templates_details = self.filter_and_report_by_remote_folders(templates_details, remote_folders)
+        templates_details = self.filter_by_present_remote_folder(templates_details)
         n_with_remote_folder = len(templates_details)
 
         # check if all configurations are present on the target instance,
-        # warn about missing ones
-        local_configurations = self.get_local_configurations(templates_details)
-        remote_configurations = self.find_remote_configurations(local_configurations)
-        self.report_missing_configurations(local_configurations, remote_configurations)
+        self.report_missing_configurations(templates_details)
 
         # check for templates already present on the target system,
-        templates_details = self.filter_and_report_existing_templates(templates_details)
+        templates_details = self.filter_by_absent_templates(templates_details)
         n_not_existing_remotely = len(templates_details)
 
-        # check if all referenced templates are present on the target instance
-        # warn about missing ones
+        # check if all referenced CreateReleaseTask templates are present on the
+        # target instance or are going to be pushed
+        self.report_missing_referenced_templates(templates_details)
 
-        # sort template topologically
+        # sort templates topologically
 
         # import templates one by one, rewriting JSONs with new imported IDs
 
@@ -69,8 +81,6 @@ class ConfigurationPusher:
             'actions': self.actions,
 
             'debug_template_details': templates_details,
-            'debug_remote_folders': remote_folders,
-            'debug_remote_configurations': remote_configurations,
             'debug_numbers': {
                 'n_local_templates': n_local_templates,
                 'n_with_remote_folder': n_with_remote_folder,
@@ -78,93 +88,111 @@ class ConfigurationPusher:
             }
         }
 
-    def find_remote_folders(self, templates_details):
-        # collect expected remote folder paths
-        local_folder_paths = list(set([_get_parent(t['path']) for t in templates_details if _get_parent(t['path'])]))
-        local_folder_paths.sort()
+    def _all_templates(self, templates_details):
+        return templates_details + [ref for t in templates_details for ref in t['referenced_templates']]
+
+    def apply_folder_renamings(self, templates_details):
         renamings = self.push_spec.get('folders', {}).get('rename', {})
-        local_to_remote_path = dict(zip(local_folder_paths, local_folder_paths))
-        for local_path in local_folder_paths:
+        for template in self._all_templates(templates_details):
+            local_path = template['path']
+            remote_path = local_path
             for pattern_to_rename in renamings:
                 pattern = '^' + pattern_to_rename
                 if re.match(pattern, local_path):
                     remote_path = re.sub(pattern, renamings[pattern_to_rename], local_path)
-                    local_to_remote_path[local_path] = remote_path
                     break  # don't go through several renamings
+            template['remote_path'] = remote_path
 
-        # search for remote folders and save their IDs
-        return dict(map(
-            lambda path: (path, self.remote_xlr.get_folder_id_by_path(local_to_remote_path[path])),
-            local_folder_paths
-        ))
-
-    def get_local_configurations(self, templates_details):
-        return dict([(config['id'], config)
-                     for template in templates_details
-                     for config in template['referenced_configurations']])
-
-    def find_remote_configurations(self, local_configurations):
-        # collect expected remote configurations
-        remote_configurations = {}
+    def apply_configuration_renamings(self, templates_details):
+        configs = [config for t in templates_details for config in t['referenced_configurations']]
         renamings = self.push_spec.get('configurations', {}).get('rename', {})
-        for (local_config_id, local_config) in local_configurations.items():
-            config_type = local_config['type']
-            local_title = local_config['title']
-            remote_title = renamings.get('%s/%s' % (config_type, local_title), local_title)
-            remote_config_id = self.remote_xlr.get_configuration_id_by_type_and_title(
-                config_type, remote_title, self.warnings)
-            remote_configurations[local_config_id] = remote_config_id
-        return remote_configurations
+        for config in configs:
+            title = config['title']
+            remote_title = renamings.get('%s/%s' % ((config['type']), title), title)
+            config['remote_title'] = remote_title
 
-    def filter_and_report_by_remote_folders(self, templates_details, remote_folders):
-        template_count_by_path = {}
-
-        # add remote folder id where present and count where absent
-        for template in templates_details:
-            folder_path = _get_parent(template['path'])
+    def find_and_apply_remote_folder_ids(self, templates_details):
+        remote_folder_paths = set([_get_parent(t['remote_path'])
+                                   for t in self._all_templates(templates_details)
+                                   if _get_parent(t['remote_path'])])
+        folder_ids_by_path = dict(map(
+            lambda path: (path, self.remote_xlr.get_folder_id_by_path(path)),
+            remote_folder_paths
+        ))
+        for template in self._all_templates(templates_details):
+            folder_path = _get_parent(template['remote_path'])
             if folder_path:
-                # a folder template
-                if remote_folders[folder_path]:
-                    template['remote_folder_id'] = remote_folders[folder_path]
-                else:
-                    count = template_count_by_path.get(folder_path, 0)
-                    template_count_by_path[folder_path] = count + 1
+                template['remote_folder_id'] = folder_ids_by_path[folder_path]
             else:
-                # a root template
                 template['remote_folder_id'] = 'Applications'
 
-        # report the absent ones
-        missing_paths = [path for (path, folder_id) in remote_folders.items() if not folder_id]
-        if missing_paths:
-            missing_paths.sort()
-            for path in missing_paths:
-                self.errors.append('Missing remote folder [%s] for %d matching templates' %
-                                   (path, template_count_by_path.get(path, 0)))
-        # return only the present ones
-        return filter(lambda t: 'remote_folder_id' in t, templates_details)
+    def find_and_apply_remote_template_ids(self, templates_details):
+        for template in self._all_templates(templates_details):
+            remote_template_id = None
+            if template.get('remote_folder_id', None):
+                title = _get_name(template['remote_path'])
+                remote_template_id = self.remote_xlr.get_template_id_by_folder_and_title(
+                    template['remote_folder_id'], title)
+            template['remote_template_id'] = remote_template_id
 
-    def report_missing_configurations(self, local_configurations, remote_configurations):
-        ids_missing = [local_id for (local_id, remote_id) in remote_configurations.items() if not remote_id]
-        for local_id in ids_missing:
-            config = local_configurations[local_id]
+    def find_and_apply_remote_configuration_ids(self, templates_details):
+        all_configurations = [config for t in templates_details for config in t['referenced_configurations']]
+        unique_configurations = dict([(config['id'], config) for config in all_configurations])
+        remote_configurations = {}
+        for local_config_id, config in unique_configurations.items():
+            remote_config_id = self.remote_xlr.get_configuration_id_by_type_and_title(
+                config['type'], config['remote_title'], self.warnings)
+            remote_configurations[local_config_id] = remote_config_id
+        for config in all_configurations:
+            config['remote_configuration_id'] = remote_configurations[config['id']]
+
+    def filter_by_present_remote_folder(self, templates_details):
+        templates_with_no_remote_folder = filter(lambda t: 'remote_folder_id' not in t, templates_details)
+        missing_templates_count_by_path = {}
+        for path, templates in groupby(templates_with_no_remote_folder, lambda t: _get_parent(t['remote_path'])):
+            missing_templates_count_by_path[path] = len(templates)
+        missing_paths = missing_templates_count_by_path.keys()
+        missing_paths.sort()
+        for path in missing_paths:
+            self.errors.append('Missing remote folder [%s] for %d matching templates' %
+                               (path, missing_templates_count_by_path.get(path, 0)))
+        # return only the present ones
+        return filter(lambda t: t['remote_folder_id'], templates_details)
+
+    def report_missing_configurations(self, templates_details):
+        all_configurations = [config for t in templates_details for config in t['referenced_configurations']]
+        missing_configurations = dict([(config['id'], config)
+                                       for config in all_configurations
+                                       if not config['remote_configuration_id']])
+        for local_id, config in missing_configurations.items():
             self.warnings.append('Missing remote configuration by type [%s] and title [%s]' %
                                  (config['type'], config['title']))
 
-    def filter_and_report_existing_templates(self, templates_details):
-        existing_template_ids = {}
+    def filter_by_absent_templates(self, templates_details):
         for template in templates_details:
-            path = template['path']
-            title = path if '/' not in path else path.rsplit('/', 1)[1]
-            remote_template = self.remote_xlr.get_template_by_folder_and_title(template['remote_folder_id'], title)
-            if remote_template:
+            if template['remote_template_id']:
                 self.actions.append({
                     'type': 'noop',
-                    'description': 'Template [%s](%s) already exists on the remote instance: [%s]' %
-                                   (title, template['id'], remote_template['id'])
+                    'description': 'Template [%s](%s) already exists on the remote instance: [%s](%s)' % (
+                        template['path'], template['id'], template['remote_path'], template['remote_template_id'])
                 })
-                existing_template_ids[template['id']] = remote_template['id']
         # return only non-existing ones
-        return filter(lambda t: t['id'] not in existing_template_ids, templates_details)
+        return filter(lambda t: not t['remote_template_id'], templates_details)
+
+    def report_missing_referenced_templates(self, templates_details):
+        pushed_template_ids = set(t['id'] for t in templates_details)
+        referenced_templates_by_ids = dict([(ref['id'], ref)
+                                            for t in templates_details
+                                            for ref in t['referenced_templates']])
+        external_missing_templates = [t for t_id, t in referenced_templates_by_ids.items()
+                                      if not t['remote_template_id'] and t_id not in pushed_template_ids]
+        for missing in external_missing_templates:
+            templates_using_it = [t for t in templates_details
+                                  if missing['id'] in
+                                  [ref['id'] for ref in t['referenced_templates']]]
+            self.warnings.append('Missing remote template [%s] referenced from %d local templates: %s' % (
+                missing['remote_path'], len(templates_using_it), [t['path'] for t in templates_using_it]
+            ))
 
 
 # noinspection PyMethodMayBeStatic
@@ -239,13 +267,13 @@ class LocalXlr:
             spec['include']
         ))
 
-    def _normalize(self, id):
-        return id[1:] if id.startswith('/') else id
+    def _normalize(self, ci_id):
+        return ci_id[1:] if ci_id.startswith('/') else ci_id
 
     def _get_referenced_configurations(self, template):
         referenced_configurations = []
         template_json = self._serialize(template)
-        for config_id in re.findall('"Configuration/Custom/[\w/]+"', template_json):
+        for config_id in set(re.findall('"Configuration/Custom/[\w/]+"', template_json)):
             config_id = config_id.replace('"', '')
             if config_id in self._configurations_details_cache:
                 config_details = self._configurations_details_cache[config_id]
@@ -280,6 +308,7 @@ class LocalXlr:
                                                         template.getTitle(), template.getId(), e))
         return referenced_templates
 
+    # noinspection PyProtectedMember
     def _serialize(self, ci):
         from com.xebialabs.xlrelease.json import CiSerializerHelper
         if ci._delegate:
@@ -333,7 +362,7 @@ class RemoteXlr:
             raise Exception('Request to find a configuration [%s/%s] failed with status %d' %
                             (config_type, config_title, response.getStatus()))
 
-    def get_template_by_folder_and_title(self, folder_id, title):
+    def get_template_id_by_folder_and_title(self, folder_id, title):
         # Unfortunately there's no public API to search for a template by folder _and_ title,
         # so iterate through all templates of a folder
         context = '/api/v1/folders/%s/templates' % folder_id
@@ -353,7 +382,7 @@ class RemoteXlr:
                 break
             for template in templates:
                 if template['title'] == title:
-                    return template
+                    return template['id']
             page += 1
 
         return None
