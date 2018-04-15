@@ -36,6 +36,7 @@ class ConfigurationPusher:
         self.warnings = []
         self.errors = []
         self.actions = []
+        self.stats = {}
 
     def push_configuration(self):
         source_xlr = self.local_xlr.get_local_xlr_details()
@@ -74,19 +75,31 @@ class ConfigurationPusher:
         # sort templates first-dependent-then-depending order
         TopologicalSorter(templates_details, self.warnings).sort()
 
+        for template in templates_details:
+            self.actions.append({
+                'type': 'import',
+                'description': 'Import template [%s] to the remote instance' % template['path'],
+                'entity': template
+            })
+
         # import templates one by one, rewriting JSONs with new imported IDs
+        self.stats = {
+            'n_matched_templates': n_local_templates,
+            'n_with_remote_folder': n_with_remote_folder,
+            'n_not_existing_remotely': n_not_existing_remotely
+        }
+        if not self.dry_run:
+            print('Prepared the execution plan of %d actions, start executing' % len(self.actions))
+            self.execute_actions()
+        else:
+            print('Skipping execution of %d actions as it is dry run' % len(self.actions))
 
         return {
+            # 'debug_template_details': templates_details
             'warnings': self.warnings,
             'errors': self.errors,
             'actions': self.actions,
-
-            'debug_template_details': templates_details,
-            'debug_numbers': {
-                'n_local_templates': n_local_templates,
-                'n_with_remote_folder': n_with_remote_folder,
-                'n_not_existing_remotely': n_not_existing_remotely
-            }
+            'stats': self.stats,
         }
 
     def _all_templates(self, templates_details):
@@ -194,6 +207,50 @@ class ConfigurationPusher:
             self.warnings.append('Missing remote template [%s] referenced from %d local templates: %s' % (
                 missing['remote_path'], len(templates_using_it), [t['path'] for t in templates_using_it]
             ))
+
+    def execute_actions(self):
+        template_id_to_imported_id = {}
+        n_imported = 0
+        n_failed_import = 0
+        for action in self.actions:
+            if action['type'] == 'noop':
+                continue
+            if action['type'] == 'import':
+                template_details = action['entity']
+                # fill in referenced template remote id if needed
+                for ref in template_details['referenced_templates']:
+                    if not ref['remote_template_id']:
+                        ref['remote_template_id'] = template_id_to_imported_id.get(ref['id'], None)
+                try:
+                    imported_id = self.import_template(template_details)
+                    template_id_to_imported_id[template_details['id']] = imported_id
+                    n_imported += 1
+                except Exception as e:
+                    self.errors.append('Could not import template [%s](%s): %s' % (
+                        template_details['path'], template_details['id'], e))
+                    n_failed_import += 1
+
+        self.stats['n_imported'] = n_imported
+        self.stats['n_failed_import'] = n_failed_import
+
+    def import_template(self, template_details):
+        template_json = self.local_xlr.get_template_as_json(template_details['id'])
+
+        def replace_ids(t_json, local_id, remote_id):
+            return t_json.replace('"%s"' % local_id, '"%s"' % remote_id)
+
+        # rewrite configuration IDs
+        for config in template_details['referenced_configurations']:
+            if config['remote_configuration_id']:
+                template_json = replace_ids(template_json, config['id'], config['remote_configuration_id'])
+        # rewrite referenced template IDs
+        for ref in template_details['referenced_templates']:
+            if ref['remote_template_id']:
+                template_json = replace_ids(template_json, ref['id'], ref['remote_template_id'])
+
+        imported_id = self.remote_xlr.import_template(template_details['remote_folder_id'], template_json,
+                                                      template_details['path'], self.warnings)
+        return imported_id
 
 
 # noinspection PyMethodMayBeStatic
@@ -309,6 +366,10 @@ class LocalXlr:
                                                         template.getTitle(), template.getId(), e))
         return referenced_templates
 
+    def get_template_as_json(self, template_id):
+        template = self.template_api.getTemplate(template_id)
+        return self._serialize(template)
+
     # noinspection PyProtectedMember
     def _serialize(self, ci):
         from com.xebialabs.xlrelease.json import CiSerializerHelper
@@ -336,21 +397,21 @@ class RemoteXlr:
                 'version': version
             }
         else:
-            response.errorDump()
-            raise Exception('Version request to /server/info failed with status %d' % response.getStatus())
+            raise Exception('Version request to /server/info failed with status %d, response: %s' %
+                            (response.getStatus(), response.response))
 
     def get_folder_id_by_path(self, path):
         if path in self.folder_path_to_id_cache:
             return self.folder_path_to_id_cache[path]
         query = '?byPath=%s' % urllib.quote(path)
         response = self._request().get('/api/v1/folders/find' + query, contentType='application/json')
-        if response.getStatus() == 200:
+        if response.isSuccessful():
             folder_id = json.loads(response.response)['id']
         elif response.getStatus() == 404:
             folder_id = None
         else:
-            response.errorDump()
-            raise Exception('Request to find a folder [%s] failed with status %d' % (path, response.getStatus()))
+            raise Exception('Request to find a folder [%s] failed with status %d, response: %s' %
+                            (path, response.getStatus(), response.response))
         self.folder_path_to_id_cache[path] = folder_id
         return folder_id
 
@@ -360,7 +421,7 @@ class RemoteXlr:
             return self.configuration_type_title_to_id_cache[path]
         query = '?configurationType=%s&title=%s' % (urllib.quote(config_type), urllib.quote(config_title))
         response = self._request().get('/api/v1/config/byTypeAndTitle' + query, contentType='application/json')
-        if response.getStatus() == 200:
+        if response.isSuccessful():
             configurations = json.loads(response.response)
             if not configurations:
                 configuration_id = None
@@ -370,9 +431,8 @@ class RemoteXlr:
                                     (len(configurations), config_type, config_title, [c['id'] for c in configurations]))
                 configuration_id = configurations[0]['id']
         else:
-            response.errorDump()
-            raise Exception('Request to find a configuration [%s/%s] failed with status %d' %
-                            (config_type, config_title, response.getStatus()))
+            raise Exception('Request to find a configuration [%s/%s] failed with status %d, response: %s' %
+                            (config_type, config_title, response.getStatus(), response.response))
         self.configuration_type_title_to_id_cache[path] = configuration_id
         return configuration_id
 
@@ -389,12 +449,11 @@ class RemoteXlr:
         while True:
             query = '?page=%d&resultsPerPage=%d&depth=1' % (page, results_per_page)
             response = self._request().get(context + query, contentType='application/json')
-            if response.getStatus() == 200:
+            if response.isSuccessful():
                 templates = json.loads(response.response)
             else:
-                response.errorDump()
-                raise Exception('Request to get a page %d of templates of folder [%s] failed with status %d' %
-                                (page, folder_id, response.getStatus()))
+                raise Exception('Request to get page %d of templates of folder [%s] failed with status %d, response: %s'
+                                % (page, folder_id, response.getStatus(), response.response))
             if not templates:
                 # pagination finished
                 break
@@ -409,6 +468,25 @@ class RemoteXlr:
 
         self.folder_id_to_template_title_to_id_cache[folder_id] = template_titles_to_ids
         return self.folder_id_to_template_title_to_id_cache[folder_id].get(title, None)
+
+    def import_template(self, folder_id, template_json, template_path, warnings):
+        query = '?folderId=%s' % folder_id
+        body = '[%s]' % template_json  # the import endpoint expects an array of one template
+        response = self._request().post('/api/v1/templates/import' + query, body, contentType='application/json')
+        if response.isSuccessful():
+            import_result = json.loads(response.response)[0]  # there's always exactly one result
+            import_warnings = filter(lambda w: not w.startswith('Teams in this template have been removed.'),
+                                     import_result.get('warnings', []))
+            if import_warnings:
+                warnings.append('Got following warnings when importing template [%s]: %s' %
+                                (template_path, import_warnings))
+            return import_result['id']
+        else:
+            logger.info('Request to import template [%s] failed with status %d, response: [%s]. Template JSON: %s'
+                        % (template_path, response.getStatus(), response.response, body))
+            raise Exception('Request to import template [%s] failed with status %d, response: [%s]. '
+                            'Check the log files for more details' %
+                            (template_path, response.getStatus(), response.response))
 
     def _request(self):
         return HttpRequest(self.server, self.username, self.password)
