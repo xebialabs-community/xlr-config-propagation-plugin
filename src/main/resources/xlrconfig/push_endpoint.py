@@ -1,6 +1,11 @@
+from com.xebialabs.deployit.security import Permissions
 import xlrconfig
 
 reload(xlrconfig)
+
+if Permissions.getAuthenticatedUserName() != 'admin':
+    raise Exception('This endpoint is used for testing purposes and can only be invoked by user [admin], '
+                    'but current user is [%s]' % Permissions.getAuthenticatedUserName())
 
 
 def to_dict(http_configuration):
