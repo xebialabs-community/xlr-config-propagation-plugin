@@ -1,13 +1,10 @@
 # XL Release Configuration Propagation Plugin
 
-[![Build Status][xlr-config-propagation-plugin-travis-image] ][xlr-config-propagation-plugin-travis-url]
 [![Codacy][xlr-config-propagation-plugin-codacy-image] ][xlr-config-propagation-plugin-codacy-url]
 [![Code Climate][xlr-config-propagation-plugin-code-climate-image] ][xlr-config-propagation-plugin-code-climate-url]
 [![License: MIT][xlr-config-propagation-plugin-license-image] ][xlr-config-propagation-plugin-license-url]
 [![Github All Releases][xlr-config-propagation-plugin-downloads-image] ]()
 
-[xlr-config-propagation-plugin-travis-image]: https://travis-ci.org/xebialabs-community/xlr-config-propagation-plugin.svg?branch=master
-[xlr-config-propagation-plugin-travis-url]: https://travis-ci.org/xebialabs-community/xlr-config-propagation-plugin
 [xlr-config-propagation-plugin-codacy-image]: https://api.codacy.com/project/badge/Grade/d45f829ce3c1462a867f12ef06500865
 [xlr-config-propagation-plugin-codacy-url]: https://www.codacy.com/app/byaminov/xlr-config-propagation-plugin
 [xlr-config-propagation-plugin-code-climate-image]: https://codeclimate.com/github/xebialabs-community/xlr-config-propagation-plugin/badges/gpa.svg
