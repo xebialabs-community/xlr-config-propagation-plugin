@@ -1,5 +1,21 @@
 # XL Release Configuration Propagation Plugin
 
+[![Build Status][xlr-config-propagation-plugin-travis-image] ][xlr-config-propagation-plugin-travis-url]
+[![Codacy][xlr-config-propagation-plugin-codacy-image] ][xlr-config-propagation-plugin-codacy-url]
+[![Code Climate][xlr-config-propagation-plugin-code-climate-image] ][xlr-config-propagation-plugin-code-climate-url]
+[![License: MIT][xlr-config-propagation-plugin-license-image] ][xlr-config-propagation-plugin-license-url]
+[![Github All Releases][xlr-config-propagation-plugin-downloads-image] ]()
+
+[xlr-config-propagation-plugin-travis-image]: https://travis-ci.org/xebialabs-community/xlr-config-propagation-plugin.svg?branch=master
+[xlr-config-propagation-plugin-travis-url]: https://travis-ci.org/xebialabs-community/xlr-config-propagation-plugin
+[xlr-config-propagation-plugin-codacy-image]: https://api.codacy.com/project/badge/Grade/d45f829ce3c1462a867f12ef06500865
+[xlr-config-propagation-plugin-codacy-url]: https://www.codacy.com/app/byaminov/xlr-config-propagation-plugin
+[xlr-config-propagation-plugin-code-climate-image]: https://codeclimate.com/github/xebialabs-community/xlr-config-propagation-plugin/badges/gpa.svg
+[xlr-config-propagation-plugin-code-climate-url]: https://codeclimate.com/github/xebialabs-community/xlr-config-propagation-plugin
+[xlr-config-propagation-plugin-license-image]: https://img.shields.io/badge/License-MIT-yellow.svg
+[xlr-config-propagation-plugin-license-url]: https://opensource.org/licenses/MIT
+[xlr-config-propagation-plugin-downloads-image]: https://img.shields.io/github/downloads/xebialabs-community/xlr-config-propagation-plugin/total.svg
+
 ## Overview
 
 This plugin helps you propagate parts of XL Release configuration to other XL Release instances. This can be used for example to synchronize shared folders, templates or shared configurations in a federated XL Release setup. Or it can be used to migrate specific folders to a new XL Release instance during a cleanup migration.
