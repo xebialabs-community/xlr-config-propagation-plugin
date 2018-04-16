@@ -3,7 +3,7 @@
 [![Codacy][xlr-config-propagation-plugin-codacy-image] ][xlr-config-propagation-plugin-codacy-url]
 [![Code Climate][xlr-config-propagation-plugin-code-climate-image] ][xlr-config-propagation-plugin-code-climate-url]
 [![License: MIT][xlr-config-propagation-plugin-license-image] ][xlr-config-propagation-plugin-license-url]
-[![Github All Releases][xlr-config-propagation-plugin-downloads-image] ]()
+[![Github All Releases][xlr-config-propagation-plugin-downloads-image] ](https://github.com/xebialabs-community/xlr-config-propagation-plugin/releases)
 
 [xlr-config-propagation-plugin-codacy-image]: https://api.codacy.com/project/badge/Grade/d45f829ce3c1462a867f12ef06500865
 [xlr-config-propagation-plugin-codacy-url]: https://www.codacy.com/app/byaminov/xlr-config-propagation-plugin
