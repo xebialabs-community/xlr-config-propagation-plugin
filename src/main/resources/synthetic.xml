@@ -18,12 +18,18 @@
         <property name="pushConfiguration"
                   default="{&quot;templates&quot;: {&quot;include&quot;: [&quot;Folder 1/.*&quot;]}, &quot;configurations&quot;: {&quot;include&quot;: [&quot;Jenkins: Server/.*&quot;], &quot;rename&quot;: {&quot;Jenkins: Server/Jenkins 1&quot;: &quot;Jenkins: Server/Jenkins One&quot;}}}"
                   category="input" kind="string"
-                  description="Configuration of what entities to push from which folders, with patterns, as JSON string. Check the documentation for details of the format."/>
+                  description="Specification of what entities to push from which folders, with patterns, as JSON string. Check the documentation for details of the format."/>
         <property name="dryRun" default="true" category="input" kind="boolean"
                   description="If checked then this task will print out the actions that would be done, but not execute any actions."/>
 
-        <property name="executedActions" default="" category="output"
-                  description="A report of which actions were executed (or would be executed when dryRun=true), in JSON format. Check the documentation for details of the format."/>
+        <property name="stats" default="" category="output"
+                  description="Statistics of how many local templates matched the pattern, how many got pushed etc, in JSON format."/>
+        <property name="actions" default="" category="output"
+                  description="A list of executed actions, in JSON format."/>
+        <property name="warnings" default="" category="output"
+                  description="Warning messages that require user's attention, for example manual fixes that are required after the push."/>
+        <property name="errors" default="" category="output"
+                  description="Error messages, for example explaining why some entities could not be pushed."/>
     </type>
 
 </synthetic>

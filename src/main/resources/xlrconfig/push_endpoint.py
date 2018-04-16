@@ -1,5 +1,6 @@
 from com.xebialabs.deployit.security import Permissions
-import xlrconfig
+from xlrconfig.configuration_pusher import push_configuration
+# reload(xlrconfig) uncomment this for faster development cycle
 
 if Permissions.getAuthenticatedUserName() != 'admin':
     raise Exception('This endpoint is used for testing purposes and can only be invoked by user [admin], '
@@ -37,7 +38,7 @@ if xlr_server and push_config:
     xlr_server = securityApi.decrypt(configurationApi.getConfiguration(xlr_server.getId()))
     xlr_server = to_dict(xlr_server)
 
-    executed_actions = xlrconfig.push_configuration((xlr_server, None, None), push_config, dry_run, {
+    executed_actions = push_configuration((xlr_server, None, None), push_config, dry_run, {
         'folderApi': folderApi,
         'templateApi': templateApi,
         'configurationApi': configurationApi

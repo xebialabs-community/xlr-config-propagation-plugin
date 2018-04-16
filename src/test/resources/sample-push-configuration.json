@@ -2,22 +2,18 @@
   "templates": {
     "include": [
       "XL Release/.*",
-      "XL Deploy/.*",
-      "XL Products/.*",
-      "Plugins/.*",
-      "Product Marketing/.*",
-      "Overthere/.*",
-      "A Production Template"
+      "XL Deploy/Maintenance/.*",
+      "Plugins/xlr-.*"
     ]
   },
   "folders": {
     "rename": {
-      "Product Marketing": "Product Management"
+      "XL Deploy/Maintenance": "XL Deploy Maintenance"
     }
   },
   "configurations": {
     "rename": {
-      "jenkins.Server/Jenkins Server": "Jenkins NG"
+      "xldeploy.XLDeployServer/XLD": "XL Deploy Production"
     }
   }
 }
