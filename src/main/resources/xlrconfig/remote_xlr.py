@@ -103,7 +103,7 @@ class RemoteXlr:
         else:
             query = '?folderId=%s' % folder_id
 
-        manifest = {"xlr-data-model-version":"8.5.0#1","xlr-version":"8.5.5"}
+        manifest = {"xlr-data-model-version":"8.5.0#1","xlr-version":"8.5.1"}
 
         releaseTemplate = json.loads(template_json)
 
@@ -133,7 +133,7 @@ class RemoteXlr:
         url = str(self.server['url'])+'/api/v1/templates/import'+ query
 
         response = requests.post(url, files={'file': XLRfile.read()}, auth=(XLR_username,XLR_password), headers=headers)
-        
+
         print("response.status_code == " + str(response.status_code) + "\n")
         if response.status_code == 200:
             import_result = json.loads(response.content)[0]  # there's always exactly one result
