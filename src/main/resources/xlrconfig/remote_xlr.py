@@ -2,6 +2,9 @@ from com.xebialabs.xlrelease.plugin.webhook import XmlPathResult
 from xlrelease.HttpRequest import HttpRequest
 import json
 import urllib
+import requests
+from zipfile import ZipFile
+import sys
 
 
 class RemoteXlr:
@@ -99,25 +102,52 @@ class RemoteXlr:
             query = ''
         else:
             query = '?folderId=%s' % folder_id
-        body = '[%s]' % template_json  # the import endpoint expects an array of one template
-        response = self._request().post('/api/v1/templates/import' + query, body, contentType='application/json')
-        if response.isSuccessful():
-            import_result = json.loads(response.response)[0]  # there's always exactly one result
-            import_warnings = filter(lambda w: not w.startswith('Teams in this template have been removed.'),
-                                     import_result.get('warnings', []))
+
+        manifest = {"xlr-data-model-version":"8.5.0#1","xlr-version":"8.5.5"}
+
+        releaseTemplate = json.loads(template_json)
+
+        with open('manifest.json', 'w') as manifest_file:
+             json.dump(manifest, manifest_file)
+        with open('release-template.json', 'w') as release_file:
+            json.dump(releaseTemplate, release_file)
+
+        # create a ZipFile object
+        zipObj = ZipFile('template.xlr', 'w')
+
+        # Add multiple files to the zip
+        zipObj.write('manifest.json')
+        zipObj.write('release-template.json')
+
+        # close the Zip File
+        zipObj.close()
+
+        XLRfile = open('template.xlr', 'rb')
+
+        # set XLR credentials
+        XLR_username = self.server['username']
+        XLR_password = self.server['password']
+
+        headers = {"contentType":"multipart/form-data"}
+
+        url = str(self.server['url'])+'/api/v1/templates/import'+ query
+
+        response = requests.post(url, files={'file': XLRfile.read()}, auth=(XLR_username,XLR_password), headers=headers)
+        
+        print("response.status_code == " + str(response.status_code) + "\n")
+        if response.status_code == 200:
+            import_result = json.loads(response.content)[0]  # there's always exactly one result
+            import_warnings = filter(lambda w: not w.startswith('Teams in this template have been removed.'),import_result.get('warnings', []))
             if import_warnings:
                 warnings.append('Got following warnings when importing template [%s]: %s' %
                                 (template_path, import_warnings))
             internal_id = import_result['id']
             # the import result ID is in internal API format: "Folder1-Release1"
             public_id = 'Applications/%s' % (internal_id.replace('-', '/'))
+
             return public_id
         else:
-            logger.info('Request to import template [%s] failed with status %d, response: [%s]. Template JSON: %s'
-                        % (template_path, response.getStatus(), response.response, body))
-            raise Exception('Request to import template [%s] failed with status %d, response: [%s]. '
-                            'Check the log files for more details' %
-                            (template_path, response.getStatus(), response.response))
+            raise Exception('Request to import template [%s] failed with status %d, response: [%s]. ''Check the log files for more details' % (template_path, response.status_code, response.content))
 
     def _request(self):
         return HttpRequest(self.server, self.username, self.password)
